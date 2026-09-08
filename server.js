@@ -11,39 +11,37 @@ const io = new Server(server, {
   }
 });
 
-// Serve arquivos estáticos da pasta atual (caso queira colocar seu index.html na mesma pasta)
+// Serve arquivos estáticos da pasta atual
 app.use(express.static(__dirname));
 
-// Estado global sincronizado do painel
+// Estado global do painel
 let configAdminGlobal = {
   descontoGlobal: 0,
   freteGratis: 'nao',
-  filaFator: 1,
-  ganhosTotais: 0,
-  totalPedidos: 0
+  filaFator: 1
 };
 
 io.on('connection', (socket) => {
-  console.log(`> Novo cliente conectado: ${socket.id}`);
+  console.log(`> Usuário conectado: ${socket.id}`);
 
-  // Envia as configurações atuais logo que o usuário entra na página
+  // Envia o estado atual assim que o usuário entra
   socket.emit('config_atualizada', configAdminGlobal);
 
-  // O dono alterou o desconto, frete ou fila
+  // Quando o admin altera qualquer coisa
   socket.on('alterar_config_admin', (novaConfig) => {
     configAdminGlobal = novaConfig;
-    console.log('> Configuração alterada pelo admin:', configAdminGlobal);
+    console.log('> Configuração atualizada:', configAdminGlobal);
     
-    // Transmite a alteração para TODOS os clientes conectados na hora
+    // Envia a mudança para TODOS os clientes conectados na mesma hora
     io.emit('config_atualizada', configAdminGlobal);
   });
 
   socket.on('disconnect', () => {
-    console.log(`< Cliente desconectado: ${socket.id}`);
+    console.log(`< Usuário desconectado: ${socket.id}`);
   });
 });
 
 const PORT = 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}. Acesse: http://localhost:${PORT}`);
+  console.log(`🚀 Servidor rodando! Acesse: http://localhost:${PORT}`);
 });
