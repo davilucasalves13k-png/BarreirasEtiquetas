@@ -6,7 +6,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// HTML Completo injetado diretamente no servidor com Socket.io ativado no front-end
+// HTML Completo injetado diretamente no servidor com Socket.io e Painel de Configurações Globais
 const htmlContent = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -16,11 +16,11 @@ const htmlContent = `<!DOCTYPE html>
     <!-- Socket.io Client -->
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        :root { --primary: #0056b3; --success: #28a745; --bg: #f4f7f6; }
+        :root { --primary: #0056b3; --success: #28a745; --danger: #dc3545; --bg: #f4f7f6; }
         body { font-family: Arial, sans-serif; background: var(--bg); margin: 0; padding: 20px; color: #333; }
-        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         h1, h2 { color: var(--primary); }
-        .tab-menu { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #ddd; padding-bottom: 10px; }
+        .tab-menu { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #ddd; padding-bottom: 10px; flex-wrap: wrap; }
         .tab-btn { background: #ddd; border: none; padding: 10px 15px; cursor: pointer; border-radius: 4px; font-weight: bold; }
         .tab-btn.active { background: var(--primary); color: #fff; }
         .tab-content { display: none; }
@@ -31,9 +31,11 @@ const htmlContent = `<!DOCTYPE html>
         button:hover { opacity: 0.9; }
         .badge { background: #ffc107; color: #000; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
         .auto-save-status { font-size: 11px; color: #666; float: right; margin-top: 5px; }
+        .row-group { display: flex; gap: 10px; align-items: center; }
+        .row-group > * { flex: 1; }
     </style>
 </head>
-<body>
+<body id="bodyInterface">
 
 <div class="container">
     <h1>Barreiras Pagamentos & Etiquetas</h1>
@@ -41,6 +43,7 @@ const htmlContent = `<!DOCTYPE html>
     
     <div class="tab-menu">
         <button class="tab-btn active" onclick="switchTab('painel')">Painel & Entrega</button>
+        <button class="tab-btn" onclick="switchTab('admin')">Gestão Global (Admin)</button>
         <button class="tab-btn" onclick="switchTab('cartoes')">Cartões & Pagamento</button>
         <button class="tab-btn" onclick="switchTab('webcredito')">Web Crédito</button>
         <button class="tab-btn" onclick="switchTab('loja')">Loja (Comprar Limite)</button>
@@ -51,6 +54,52 @@ const htmlContent = `<!DOCTYPE html>
         <div class="card">
             <p><strong>Item:</strong> Bobinas de Papel + Papel Hambúrguer (Primeira Compra c/ Arte: +R$ 20)</p>
             <p><strong>Prazo de Chegada Dinâmico:</strong> <span id="countdownDisplay" class="badge">Calculando...</span></p>
+            <div id="avisoInterfaceCliente" style="margin-top: 10px; font-weight: bold; color: var(--primary);"></div>
+        </div>
+    </div>
+
+    <div id="admin" class="tab-content">
+        <h2>Painel de Controle Global (Sincronizado)</h2>
+        
+        <div class="card">
+            <h3>1. Desconto Global</h3>
+            <div class="row-group">
+                <select id="statusDesconto" onchange="autoSave()">
+                    <option value="ativo">Ativado</option>
+                    <option value="desativado">Desativado</option>
+                </select>
+                <input type="number" id="valorDesconto" placeholder="Ex: 10 (%)" oninput="autoSave()">
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>2. Frete Grátis Global</h3>
+            <select id="statusFrete" onchange="autoSave()">
+                <option value="ativo">Ativado (R$ 0,00)</option>
+                <option value="desativado">Desativado (Padrão)</option>
+            </select>
+        </div>
+
+        <div class="card">
+            <h3>3. Mudança de Preços Global</h3>
+            <div class="row-group">
+                <select id="statusPrecos" onchange="autoSave()">
+                    <option value="ativo">Ativado (Aplicar Ajuste)</option>
+                    <option value="desativado">Desativado</option>
+                </select>
+                <input type="number" id="fatorPrecos" placeholder="Fator Ex: 1.2 (20% mais caro)" step="0.1" oninput="autoSave()">
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>4. Mudança de Loja / Interface</h3>
+            <div class="row-group">
+                <select id="statusInterface" onchange="autoSave()">
+                    <option value="padrao">Modo Padrão</option>
+                    <option value="especial">Modo Especial / Noturno / Manutenção</option>
+                </select>
+            </div>
+            <input type="text" id="mensagemInterface" placeholder="Aviso especial para exibir na interface dos clientes" oninput="autoSave()">
         </div>
     </div>
 
@@ -64,7 +113,6 @@ const htmlContent = `<!DOCTYPE html>
         </div>
         <div class="card">
             <h3>Pagamento Inteligente (Foto ou Crédito/Débito)</h3>
-            <p>Selecione a forma de pagamento ou envie a foto do cartão para auto-identificação:</p>
             <select id="tipoPagamento" onchange="autoSave()">
                 <option value="credito">Cartão de Crédito</option>
                 <option value="debito">Cartão de Débito Registrado</option>
@@ -79,13 +127,11 @@ const htmlContent = `<!DOCTYPE html>
         <div class="card">
             <p>Seu Limite Atual:</p>
             <h1 id="displayLimite">R$ 1.000,00</h1>
-            <p>Use seu Web Crédito para insumos de mercado, bobinas e papéis personalizados.</p>
         </div>
     </div>
 
     <div id="loja" class="tab-content">
         <h2>Loja de Expansão de Limite</h2>
-        <p>Precisa de mais poder de compra para seus estoques de embalagens?</p>
         <div class="card">
             <h3>Pacote +R$ 1.000,00 de Limite</h3>
             <p>Preço: <strong>R$ 30,00</strong></p>
@@ -102,7 +148,15 @@ const htmlContent = `<!DOCTYPE html>
         cartaoRegistrado: false,
         titular: "",
         cartao: "",
-        dataEntregaAlvo: new Date(new Date().getTime() + 2 * 365 * 24 * 60 * 60 * 1000) 
+        dataEntregaAlvo: new Date(new Date().getTime() + 2 * 365 * 24 * 60 * 60 * 1000),
+        // Novas configurações globais
+        descontoStatus: "desativado",
+        descontoValor: 0,
+        freteStatus: "desativado",
+        precosStatus: "desativado",
+        precosFator: 1.0,
+        interfaceStatus: "padrao",
+        interfaceMensagem: ""
     };
 
     window.onload = function() {
@@ -110,8 +164,7 @@ const htmlContent = `<!DOCTYPE html>
         if(saved) {
             appState = JSON.parse(saved);
             appState.dataEntregaAlvo = new Date(appState.dataEntregaAlvo);
-            document.getElementById('numCartao').value = appState.cartao || '';
-            document.getElementById('nomeTitular').value = appState.titular || '';
+            preencherCamposComEstado();
         }
         atualizarInterface();
         setInterval(atualizarPrazoInteligente, 1000);
@@ -119,26 +172,45 @@ const htmlContent = `<!DOCTYPE html>
 
     // Socket.io escutando atualizações em tempo real de outros dispositivos
     socket.on('state_updated', function(incomingState) {
-        appState.limiteWebCredito = incomingState.limiteWebCredito;
-        appState.titular = incomingState.titular;
-        appState.cartao = incomingState.cartao;
-        document.getElementById('numCartao').value = appState.cartao;
-        document.getElementById('nomeTitular').value = appState.titular;
+        appState = incomingState;
+        appState.dataEntregaAlvo = new Date(appState.dataEntregaAlvo);
+        preencherCamposComEstado();
         atualizarInterface();
     });
+
+    function preencherCamposComEstado() {
+        document.getElementById('numCartao').value = appState.cartao || '';
+        document.getElementById('nomeTitular').value = appState.titular || '';
+        document.getElementById('statusDesconto').value = appState.descontoStatus || 'desativado';
+        document.getElementById('valorDesconto').value = appState.descontoValor || 0;
+        document.getElementById('statusFrete').value = appState.freteStatus || 'desativado';
+        document.getElementById('statusPrecos').value = appState.precosStatus || 'desativado';
+        document.getElementById('fatorPrecos').value = appState.precosFator || 1.0;
+        document.getElementById('statusInterface').value = appState.interfaceStatus || 'padrao';
+        document.getElementById('mensagemInterface').value = appState.interfaceMensagem || '';
+    }
 
     function autoSave() {
         appState.titular = document.getElementById('nomeTitular').value;
         appState.cartao = document.getElementById('numCartao').value;
+        appState.descontoStatus = document.getElementById('statusDesconto').value;
+        appState.descontoValor = parseFloat(document.getElementById('valorDesconto').value) || 0;
+        appState.freteStatus = document.getElementById('statusFrete').value;
+        appState.precosStatus = document.getElementById('statusPrecos').value;
+        appState.precosFator = parseFloat(document.getElementById('fatorPrecos').value) || 1.0;
+        appState.interfaceStatus = document.getElementById('statusInterface').value;
+        appState.interfaceMensagem = document.getElementById('mensagemInterface').value;
         
         localStorage.setItem('barreiras_state', JSON.stringify(appState));
         
-        // Envia dados para o Socket.io sincronizar em tempo real
+        // Envia dados para o Socket.io sincronizar em tempo real com todos
         socket.emit('update_state', appState);
 
         const status = document.getElementById('saveStatus');
         status.innerText = "Salvo automaticamente!";
         setTimeout(() => { status.innerText = ""; }, 2000);
+        
+        atualizarInterface();
     }
 
     function switchTab(tabId) {
@@ -151,45 +223,26 @@ const htmlContent = `<!DOCTYPE html>
     function atualizarPrazoInteligente() {
         const agora = new Date();
         const diffMs = appState.dataEntregaAlvo - agora;
-
         if (diffMs <= 0) {
             document.getElementById('countdownDisplay').innerText = "Pedido Entregue!";
             return;
         }
-
         const segundos = Math.floor(diffMs / 1000);
         const minutos = Math.floor(segundos / 60);
         const horas = Math.floor(minutos / 60);
         const dias = Math.floor(horas / 24);
-        const anos = Math.floor(dias / 365);
-
-        let textoPrazo = "";
-        if (anos > 0) {
-            const diasRestantes = dias % 365;
-            textoPrazo = anos + " ano(s) e " + diasRestantes + " dia(s)";
-        } else if (dias > 0) {
-            const horasRestantes = horas % 24;
-            textoPrazo = dias + " dia(s) e " + horasRestantes + "h";
-        } else if (horas > 0) {
-            const minsRestantes = minutos % 60;
-            textoPrazo = horas + "h e " + minsRestantes + " min";
-        } else {
-            textoPrazo = minutos + " minutos";
-        }
-
+        
+        let textoPrazo = dias > 0 ? dias + " dia(s) e " + (horas % 24) + "h" : horas + "h e " + (minutos % 60) + " min";
         document.getElementById('countdownDisplay').innerText = textoPrazo;
     }
 
     function simularLeituraFoto() {
-        const fileInput = document.getElementById('fotoCartao');
-        if (fileInput.files && fileInput.files[0]) {
-            setTimeout(() => {
-                document.getElementById('numCartao').value = "**** **** **** 8899";
-                document.getElementById('nomeTitular').value = "CLIENTE IDENTIFICADO VIA FOTO";
-                autoSave();
-                alert("Cartão identificado e preenchido automaticamente pela foto com sucesso!");
-            }, 1000);
-        }
+        setTimeout(() => {
+            document.getElementById('numCartao').value = "**** **** **** 8899";
+            document.getElementById('nomeTitular').value = "CLIENTE IDENTIFICADO VIA FOTO";
+            autoSave();
+            alert("Cartão identificado e preenchido automaticamente pela foto com sucesso!");
+        }, 1000);
     }
 
     function registrarCartao() {
@@ -206,12 +259,38 @@ const htmlContent = `<!DOCTYPE html>
     function comprarLimite() {
         appState.limiteWebCredito += 1000.00;
         autoSave();
-        atualizarInterface();
         alert("Parabéns! +R$ 1.000,00 adicionados ao seu Web Crédito.");
     }
 
     function atualizarInterface() {
         document.getElementById('displayLimite').innerText = "R$ " + appState.limiteWebCredito.toLocaleString('pt-BR', {minFractionDigits: 2});
+        
+        // Aplicação visual das regras globais na tela do cliente
+        const avisoBox = document.getElementById('avisoInterfaceCliente');
+        let avisosExtras = [];
+
+        if (appState.descontoStatus === 'ativo' && appState.descontoValor > 0) {
+            avisosExtras.push("🔥 Desconto Global Ativo: " + appState.descontoValor + "% OFF");
+        }
+        if (appState.freteStatus === 'ativo') {
+            avisosExtras.push("🚚 Frete Grátis Global Ativado!");
+        }
+        if (appState.precosStatus === 'ativo') {
+            avisosExtras.push("📈 Ajuste de Preço Global Ativo (Fator: " + appState.precosFator + ")");
+        }
+        if (appState.interfaceStatus === 'especial') {
+            document.getElementById('bodyInterface').style.background = "#222";
+            document.getElementById('bodyInterface').style.color = "#eee";
+        } else {
+            document.getElementById('bodyInterface').style.background = "var(--bg)";
+            document.getElementById('bodyInterface').style.color = "#333";
+        }
+
+        if (appState.interfaceMensagem) {
+            avisosExtras.push("📢 Aviso: " + appState.interfaceMensagem);
+        }
+
+        avisoBox.innerHTML = avisosExtras.join("<br>");
     }
 </script>
 
@@ -228,7 +307,7 @@ io.on('connection', (socket) => {
     console.log(`> Novo usuário conectado via Socket.io: ${socket.id}`);
 
     socket.on('update_state', (data) => {
-        // Transmite a alteração para os outros clientes conectados em tempo real
+        // Transmite a alteração global para os outros clientes conectados em tempo real
         socket.broadcast.emit('state_updated', data);
     });
 
@@ -239,5 +318,5 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`> Servidor com Socket.io rodando na porta ${PORT}`);
+    console.log(`> Servidor com Socket.io e Gestão Global rodando na porta ${PORT}`);
 });
