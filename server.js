@@ -5,8 +5,7 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
-// Faz o Express servir automaticamente o index.html e arquivos estáticos da mesma pasta
-app.use(express.static(__dirname));
+app.use(express.static(__dirname)); // Serve o HTML nativamente pelo mesmo domínio
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -16,7 +15,15 @@ const io = new Server(server, {
     }
 });
 
-// Estado global do painel de controle (Desconto, Frete, Fila e Campanha Extra)
+// Captura qualquer erro interno de handshake do Engine.IO (essencial para debug)
+io.engine.on("connection_error", (err) => {
+    console.log("--- ENGINE.IO CONNECTION ERROR ---");
+    console.log("Código:", err.code);
+    console.log("Mensagem:", err.message);
+    console.log("Contexto:", err.context);
+});
+
+// Estado global do painel
 let configAdminGlobal = {
     descontoGlobal: 0,
     freteGratis: 'nao',
@@ -25,24 +32,20 @@ let configAdminGlobal = {
     taxaFixaFrete: 15.00
 };
 
-// Armazena a ordem de chegada dos usuários que fizeram pedido (FIFO)
 let filaPedidos = []; 
 
 io.on('connection', (socket) => {
-    console.log(`> Conectado: ${socket.id}`);
+    console.log(`> Conectado com sucesso: ${socket.id}`);
 
-    // Envia o estado atual e o tempo de fila individual logo na conexão
     socket.emit('config_atualizada', {
         ...configAdminGlobal,
         meuTempoFila: calcularTempoFila(socket.id)
     });
 
-    // 1. Admin altera as configurações globais
     socket.on('alterar_config_admin', (novaConfig) => {
         configAdminGlobal = { ...configAdminGlobal, ...novaConfig };
         console.log('> Configuração global atualizada:', configAdminGlobal);
 
-        // Propaga a alteração para todos os clientes conectados, recalculando a fila de cada um
         io.sockets.sockets.forEach((sClient) => {
             sClient.emit('config_atualizada', {
                 ...configAdminGlobal,
@@ -51,14 +54,12 @@ io.on('connection', (socket) => {
         });
     });
 
-    // 2. Cliente clica para fazer o pedido e entra na fila dinâmica
     socket.on('fazer_pedido', () => {
         if (!filaPedidos.includes(socket.id)) {
             filaPedidos.push(socket.id);
-            console.log(`> Novo pedido na fila. Posição atual na fila: ${filaPedidos.length}`);
+            console.log(`> Novo pedido na fila. Posição: ${filaPedidos.length}`);
         }
 
-        // Atualiza o painel de todos para refletir o novo status de espera
         io.sockets.sockets.forEach((sClient) => {
             sClient.emit('config_atualizada', {
                 ...configAdminGlobal,
@@ -67,24 +68,19 @@ io.on('connection', (socket) => {
         });
     });
 
-    // 3. Desconexão do usuário
     socket.on('disconnect', () => {
         console.log(`< Desconectado: ${socket.id}`);
-        // Remove da fila de pedidos caso estivesse participando
         filaPedidos = filaPedidos.filter(id => id !== socket.id);
     });
 });
 
-// Função para calcular o tempo de fila individual (quem chegou antes espera menos, quem chegou depois acumula atraso)
 function calcularTempoFila(socketId) {
     const tempoBaseMinutos = 10;
     const indexNaFila = filaPedidos.indexOf(socketId);
 
     if (indexNaFila === -1) {
-        // Se ainda não fez pedido, retorna o tempo base multiplicado pelo fator admin
         return Math.round(tempoBaseMinutos * configAdminGlobal.fatorFilaBase);
     } else {
-        // Se já fez pedido, adiciona 3 minutos extras para cada pessoa que está na frente na fila
         const atrasoPorPosicao = indexNaFila * 3;
         return Math.round((tempoBaseMinutos + atrasoPorPosicao) * configAdminGlobal.fatorFilaBase);
     }
