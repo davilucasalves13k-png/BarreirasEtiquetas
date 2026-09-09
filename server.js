@@ -37,6 +37,7 @@ let filaPedidos = [];
 io.on('connection', (socket) => {
     console.log(`> Conectado com sucesso: ${socket.id}`);
 
+    // Envia o estado atualizado para o cliente recém-conectado
     socket.emit('config_atualizada', {
         ...configAdminGlobal,
         meuTempoFila: calcularTempoFila(socket.id)
@@ -46,6 +47,7 @@ io.on('connection', (socket) => {
         configAdminGlobal = { ...configAdminGlobal, ...novaConfig };
         console.log('> Configuração global atualizada:', configAdminGlobal);
 
+        // Dispara a atualização para todos os clientes conectados de forma segura
         io.sockets.sockets.forEach((sClient) => {
             sClient.emit('config_atualizada', {
                 ...configAdminGlobal,
@@ -60,6 +62,7 @@ io.on('connection', (socket) => {
             console.log(`> Novo pedido na fila. Posição: ${filaPedidos.length}`);
         }
 
+        // Atualiza a fila e as configs para todos os clientes conectados
         io.sockets.sockets.forEach((sClient) => {
             sClient.emit('config_atualizada', {
                 ...configAdminGlobal,
@@ -71,6 +74,8 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log(`< Desconectado: ${socket.id}`);
         filaPedidos = filaPedidos.filter(id => id !== socket.id);
+        
+        // Opcional: Se quiser recalcular a fila para quem ficou quando alguém sai, pode disparar um broadcast aqui se necessário.
     });
 });
 
@@ -86,6 +91,7 @@ function calcularTempoFila(socketId) {
     }
 }
 
+// Porta dinâmica obrigatória para Render, Railway, Heroku, etc.
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
